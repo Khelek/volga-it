@@ -1,5 +1,14 @@
-.eunit
+erl_crash.dump
+/.eunit/*
+*/.idea/
 deps
-*.o
+ebin
+log
+/test/log/*
 *.beam
+.eunit
+*.o
 *.plt
+*~
+\#*\#
+.\#*
