@@ -1,25 +1,63 @@
 -module(http_receiver).
 
--export([start/1]).
+%% API.
+-export([start/0]).
+-export([stop/0]).
 
-start(Port) ->
-    {ok, Sock} = gen_tcp:listen(Port, [list, {active, false}, {packet, http}]),
-    loop(Sock),
+%% API.
+
+start() ->
+    Dispatch = cowboy_router:compile([
+                                      {'_', [
+                                             {"/data/:key", ?MODULE, []}
+                                            ]}
+                                     ]),
+    {ok, _} = cowboy:start_http(http, 100, [{port, 8081}], [
+                                                            {env, [{dispatch, Dispatch}]}
+                                                           ]).
+
+stop() ->
     ok.
 
-loop(Sock) ->
-    {ok, Conn} = gen_tcp:accept(Sock),
-    spawn(fun() -> handle_request(Conn) end),
-    loop(Sock).
+init(_Transport, Req, []) ->
+    {ok, Req, undefined}.
 
-handle_request(Conn) ->
-    {ok, {http_request, Method, Path, Version}}=gen_tcp:recv(Conn, 0),
-    case (Method) of
-        'PUT' ->
-            gen_tcp:send(Conn, "shtsht");
-           % gen_server:cast();
-        'GET' ->
-            gen_tcp:send(Conn, "sht");
-        _ -> gen_tcp:send(Conn, "Error")
+handle(Req, State) ->
+    {Method, Req2} = cowboy_req:method(Req),
+    HasBody = cowboy_req:has_body(Req2),
+    case Method of 
+        <<"PUT">> ->
+            {ok, Data, Req3} = cowboy_req:body(16384, Req2), %% TODO: проверить, падает ли хендлер без восстановления  
+            put_to_server(Data);
+        <<"GET">> ->
+            get_from_server();
+        _ ->
+            send_error()
     end,
-    gen_tcp:close(Conn).
+    {ok, Req4} = maybe_echo(Method, HasBody, Req2),
+    {ok, Req4, State}.
+
+terminate(_Reason, _Req, _State) ->
+    ok.
+
+maybe_echo(<<"PUT">>, true, Req) ->
+    {ok, PostVals, Req2} = cowboy_req:body_qs(Req),
+    Echo = proplists:get_value(<<"echo">>, PostVals),
+    echo(Echo, Req2);
+maybe_echo(<<"PUT">>, false, Req) ->
+    cowboy_req:reply(400, [], <<"Missing body.">>, Req);
+maybe_echo(<<"GET">>, _, Req) ->
+    {Echo, Req2} = cowboy_req:qs_val(<<"echo">>, Req),
+    echo(Echo, Req2);
+maybe_echo(_, _, Req) ->
+    %% Method not allowed.
+    cowboy_req:reply(405, Req).
+
+echo(undefined, Req) ->
+    cowboy_req:reply(400, [], <<"Missing echo parameter.">>, Req);
+echo(Echo, Req) ->
+    {Key, Req} = cowboy_req:binding(key, Req),
+    cowboy_req:reply(200, [
+                           {<<"content-type">>, <<"text/plain; charset=utf-8">>}
+                          ], Echo, Req).
+

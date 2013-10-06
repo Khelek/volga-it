@@ -5,7 +5,9 @@
   {registered, []},
   {applications, [
                   kernel,
-                  stdlib
+                  stdlib,
+                  ranch,
+                  cowboy
                  ]},
   {mod, { distr_db_app, []}},
   {env, []}
