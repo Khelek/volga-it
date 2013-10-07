@@ -10,6 +10,8 @@
 %% ===================================================================
 
 start(_StartType, _StartArgs) ->
+    distr_db_srv:start_link(),
+    http_receiver:start(),
     distr_db_sup:start_link().
 
 stop(_State) ->

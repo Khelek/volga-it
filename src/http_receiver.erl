@@ -4,6 +4,8 @@
 -export([start/0]).
 -export([stop/0]).
 
+%% cowboy handler
+-export([init/3, handle/2, terminate/3]).
 %% API.
 
 start() ->
@@ -19,45 +21,47 @@ start() ->
 stop() ->
     ok.
 
+%% cowboy handler
+
 init(_Transport, Req, []) ->
     {ok, Req, undefined}.
 
 handle(Req, State) ->
     {Method, Req2} = cowboy_req:method(Req),
-    HasBody = cowboy_req:has_body(Req2),
-    case Method of 
-        <<"PUT">> ->
-            {ok, Data, Req3} = cowboy_req:body(16384, Req2), %% TODO: проверить, падает ли хендлер без восстановления  
-            put_to_server(Data);
-        <<"GET">> ->
-            get_from_server();
-        _ ->
-            send_error()
-    end,
-    {ok, Req4} = maybe_echo(Method, HasBody, Req2),
+    {Key, Req2} = cowboy_req:binding(key, Req2),
+    % if_longer_key(Key), %% exit
+    Req4 = case Method of 
+               <<"PUT">> ->
+                   {ok, Data, Req3} = cowboy_req:body(16384, Req2), %% TODO: проверить, падает ли хендлер без восстановления. мб поставить case  
+                   % HasBody = cowboy_req:has_body(Req2), % если тело пустое - удалять по ключу
+                   ok = put_to_db(Key, Data), 
+                   send(<<"ok">>, Req3),
+                   Req3; 
+               <<"GET">> ->
+                   Data = get_from_db(Key),
+                   send(Data, Req2),
+                   Req2;
+               _ ->
+                   send_error(Req2),
+                   Req2
+           end,
     {ok, Req4, State}.
 
 terminate(_Reason, _Req, _State) ->
     ok.
 
-maybe_echo(<<"PUT">>, true, Req) ->
-    {ok, PostVals, Req2} = cowboy_req:body_qs(Req),
-    Echo = proplists:get_value(<<"echo">>, PostVals),
-    echo(Echo, Req2);
-maybe_echo(<<"PUT">>, false, Req) ->
-    cowboy_req:reply(400, [], <<"Missing body.">>, Req);
-maybe_echo(<<"GET">>, _, Req) ->
-    {Echo, Req2} = cowboy_req:qs_val(<<"echo">>, Req),
-    echo(Echo, Req2);
-maybe_echo(_, _, Req) ->
+%% utilite function
+
+put_to_db(Key, Data) ->
+    ok = gen_server:call(distr_db_srv, {put, Key, Data}).
+
+get_from_db(Key) ->
+    {ok, Data} = gen_server:call(distr_db_srv, {get, Key}),
+    Data.
+
+send_error(Req) ->
     %% Method not allowed.
     cowboy_req:reply(405, Req).
 
-echo(undefined, Req) ->
-    cowboy_req:reply(400, [], <<"Missing echo parameter.">>, Req);
-echo(Echo, Req) ->
-    {Key, Req} = cowboy_req:binding(key, Req),
-    cowboy_req:reply(200, [
-                           {<<"content-type">>, <<"text/plain; charset=utf-8">>}
-                          ], Echo, Req).
-
+send(Data, Req) ->
+    cowboy_req:reply(200, [{<<"content-type">>, <<"text/plain; charset=utf-8">>}], Data, Req).
